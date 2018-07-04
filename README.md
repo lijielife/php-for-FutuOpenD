@@ -10,4 +10,11 @@ http://pecl.php.net/package/swoole
 富途网关启动:
 
 https://futunnopen.github.io/futuquant/intro/intro.html
-/usr/pkgs/futu/FutuOpenD -cfg_file=/usr/pkgs/futu/FutuOpenD.xml -hist_data_cfg_file=/usr/pkgs/futu/FutuHistData.xml -console=0 -lang=en
+/path/to/FutuOpenD -cfg_file=/path/to/FutuOpenD.xml -hist_data_cfg_file=/path/to/FutuHistData.xml -console=0 -lang=en
+/path/to/FutuHistData -hist_data_cfg_file=/path/to/FutuHistData.xml
+
+同步模式:
+$o = new futu($host, $port, $pass);
+print_r($o->GetGlobalState());
+
+异步模式参考 qot_push.php
