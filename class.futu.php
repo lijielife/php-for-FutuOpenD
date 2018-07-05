@@ -1243,7 +1243,7 @@ class futu{
 		$ret .= pack("L", (int)$proto); //协议ID
 		$ret .= pack("C", 1); //协议格式类型，0为Protobuf格式，1为Json格式
 		$ret .= pack("C", 0); //协议版本，用于迭代兼容
-		$ret .= pack("L", $this->sequence++); //包序列号，用于对应请求包和回包
+		$ret .= pack("L", $this->sequence = mt_rand(0, 4294967295)); //包序列号，用于对应请求包和回包
 		$ret .= pack("L", strlen($C2S)); //包体长度
 		$ret .= sha1($C2S, true); //包体原始数据(解密后)的SHA1哈希值
 		$ret .= pack("@8");//保留8字节扩展
