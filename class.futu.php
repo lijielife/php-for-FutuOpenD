@@ -21,6 +21,11 @@ class futu{
 	 */
 	private $sequence = 0;
 	/**
+	 * 心跳包定时器
+	 * @var integer
+	 */
+	private $timer = 0;
+	/**
 	 * 同一个连接只解锁一次
 	 * @var string
 	 */
@@ -69,6 +74,7 @@ class futu{
 	}
 	private function Connect(){
 		if(! $this->cli instanceof swoole_client){
+			$this->timer = time(); //初始化心跳时间
 			$this->cli = new swoole_client(preg_match('/^[0-9\.]+$/', $this->host)?(SWOOLE_SOCK_TCP|SWOOLE_KEEP):(SWOOLE_SOCK_UNIX_STREAM|SWOOLE_KEEP), SWOOLE_SOCK_SYNC);
 			$this->cli->set(array(
 					'socket_buffer_size' => 1024*1024*32, //32M缓存区
@@ -85,6 +91,10 @@ class futu{
 		}
 		if(! $this->cli){
 			$this->errorlog('Client Error.', 0);
+		}
+		if($this->timer && (time() - $this->timer >= 20)){ //每N秒发一次心跳(只有同步模式会初始化时间)
+			$this->timer = time(); //锁住
+			$this->KeepAlive();
 		}
 		return $this->cli;
 	}
