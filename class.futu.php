@@ -526,6 +526,50 @@ class futu{
 		return (array)$gets;
 	}
 	/**
+	 * 获取正股相关股票
+	 * @param string $code 正股代码
+	 * @param int $referenceType 1相关涡轮
+	 * @return array
+	 */
+	public function Qot_GetReference($code, $referenceType=1, $market=1){
+		if(! $this->InitConnect()){
+			return array();
+		}
+		$C2S = array(
+				'security' => array(
+						'market' => (int)$market,
+						'code' => (string)$code,
+				),
+				'referenceType' => (int)$referenceType,
+		);
+		if(! $ret = $this->send('3206', $C2S)){
+			return array();
+		}
+		$gets = array();
+		foreach ((array)$ret['staticInfoList'] as $v){
+			if($v['basic']){
+				$v['basic']['code'] = $v['basic']['security']['code'];
+				$v['basic']['market'] = $v['basic']['security']['market'];
+				unset($v['basic']['security']);
+				
+				$v['basic']['listTime'] = strtotime($v['basic']['listTime']);
+			}
+			if($v['warrantExData']){
+				$v['warrantExData']['owner_code'] = $v['warrantExData']['owner']['code'];
+				$v['warrantExData']['owner_market'] = $v['warrantExData']['owner']['market'];
+				unset($v['warrantExData']['owner']);
+			}
+			
+			$a = array_merge((array)$v['basic'], (array)$v['warrantExData']);
+			if(! $a['code']){
+				continue;
+			}
+			
+			$gets[$a['code']] = $a;
+		}
+		return (array)$gets;
+	}
+	/**
 	 * 获取单只股票一段历史K线
 	 * @param string $code
 	 * @param int $klType K线类型:1一分K;2日K;3周K;4月K;5年K;6五分K;7十五分K;8三十分K;9六十分K;10三分K;11季K
