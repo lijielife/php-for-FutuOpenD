@@ -1,4 +1,4 @@
-futuquant 3.0 (富途开放接口) PHP 接口
+FutuOpenD 3.0 (富途开放API) PHP 接口
 
 已测试环境:
 CentOS 7 + PHP 7 + Swoole 4
