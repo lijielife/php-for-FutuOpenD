@@ -1,11 +1,8 @@
 <?php
 /**
- * szargv@qq.com
- * $o = new futu($host, $port, $pass); //IP,PORT,交易解锁密码(6位数字)
- * $o->market = 1; //港股行情
- * $o->trdMarket = 1; //港股交易
- * $o->trdEnv = 1; //真实环境
- * print_r($o->GetGlobalState());
+ * 
+ * @author szargv@wo.cn
+ *
  */
 class futu{
 	/**
@@ -53,12 +50,27 @@ class futu{
 	 */
 	public $trdMarket = 1;
 	/**
+	 * 是否通讯加密,需同时设置$private_key(对性能肯定有影响)
+	 * @var bool
+	 */
+	public $encrypt = false;
+	/**
+	 * 密钥文件绝对路径,与FutuOpenD配置文件中的一致
+	 * @var string
+	 */
+	public $private_key = __DIR__.'/private.key';
+	/**
 	 * 交易账号列表
 	 * @var array
 	 */
 	public $accList = [];
 	public $connID = 0;
 	public $loginUserID = 0;
+	/**
+	 * 初始化接口返回的加密密码
+	 * @var string
+	 */
+	public $connAESKey = '';
 
 	/**
 	 * @param string $host
@@ -85,7 +97,7 @@ class futu{
 		$this->cli = $cli;
 		$this->push = true; //是否推送模式
 	}
-	private function Connect(){
+	private function connect(){
 		if(! $this->cli instanceof swoole_client){
 			$this->timer = time(); //初始化心跳时间
 			$this->cli = new swoole_client(preg_match('/^[0-9\.]+$/', $this->host)?(SWOOLE_SOCK_TCP|SWOOLE_KEEP):(SWOOLE_SOCK_UNIX_STREAM|SWOOLE_KEEP), SWOOLE_SOCK_SYNC);
@@ -142,6 +154,7 @@ class futu{
 
 		$this->connID = (string)$ret['connID']; //uint64
 		$this->loginUserID = (string)$ret['loginUserID']; //uint64
+		$this->connAESKey = (string)$ret['connAESKey'];
 
 		return $this->connID;
 	}
@@ -178,7 +191,7 @@ class futu{
 		return (int)$ret['time'];
 	}
 	/**
-	 * 订阅或者反订阅,同时注册或者取消推送
+	 * 订阅或者反订阅,同时注册或者取消推送(股票个数*K线种类<=100)
 	 * @param array $codes
 	 * @param array $subTypeList 1报价;2摆盘;4逐笔;5分时;6日K;7五分K;8十五分K;9三十K;10六十K;11一分K;12周K;13月K;14经纪队列;15季K;16年K;17三分K
 	 * @param bool $isSubOrUnSub true订阅false反订阅
@@ -216,7 +229,6 @@ class futu{
 		if(! $ret = $this->send('3001', $C2S)){
 			return false;
 		}
-
 		return (bool)$ret;
 	}
 	/**
@@ -578,7 +590,58 @@ class futu{
 		return (array)$gets;
 	}
 	/**
-	 * 获取单只股票一段历史K线
+	 * 获取股票所属板块
+	 * @param array $codes 最多200个,仅支持正股和指数
+	 */
+	public function Qot_GetOwnerPlate($codes){
+		if(! $this->limit(12, 30, 10, 1)){
+			return array();
+		}
+		if(! $this->InitConnect()){
+			return array();
+		}
+		$securityList = array();
+		foreach ((array)$codes as $code){
+			$securityList[] = array(
+					'market' => $this->market,
+					'code' => (string)$code,
+			);
+		}
+		if(! $securityList){
+			return array();
+		}
+		$C2S = array(
+				'securityList' => (array)$securityList,
+		);
+		if(! $ret = $this->send('3207', $C2S)){
+			return array();
+		}
+		$gets = array();
+		foreach ((array)$ret['ownerPlateList'] as $v){
+			foreach ((array)$v['plateInfoList'] as $vv){
+				
+				$vv['plate_code'] = $vv['plate']['code'];
+				unset($vv['plate']);
+				
+				$gets[$v['security']['code']][] = $vv;
+			}
+		}
+		return (array)$gets;
+	}
+	/**
+	 * 获取持股变化列表
+	 */
+	public function Qot_GetHoldingChangeList(){
+		
+	}
+	/**
+	 * 获取期权链
+	 */
+	public function Qot_GetOptionChain(){
+		
+	}
+	/**
+	 * 获取单只股票一段历史K线(需要先下载)
 	 * @param string $code
 	 * @param int $klType K线类型:1一分K;2日K;3周K;4月K;5年K;6五分K;7十五分K;8三十分K;9六十分K;10三分K;11季K
 	 * @param int $beginTime
@@ -608,6 +671,49 @@ class futu{
 			$C2S['needKLFieldsFlag'] = (array)$needKLFieldsFlag;
 		}
 		if(! $ret = $this->send('3100', $C2S)){
+			return array();
+		}
+		$gets = array();
+		foreach ((array)$ret['klList'] as $v){
+			$v['avgPrice'] = $v['closePrice'];
+			$v['price'] = $v['closePrice']; //方便前端
+			$v['time'] = strtotime($v['time']);
+			$gets[$v['time']] = $v;
+		}
+		ksort($gets, SORT_NUMERIC);
+		return (array)$gets;
+	}
+	/**
+	 * 获取单只股票一段历史K线(无需先下载,有限额)
+	 * @param string $code
+	 * @param int $klType K线类型:1一分K;2日K;3周K;4月K;5年K;6五分K;7十五分K;8三十分K;9六十分K;10三分K;11季K
+	 * @param int $beginTime
+	 * @param int $endTime
+	 * @param int $maxAckKLNum 最多返回多少根K线,如果未指定表示不限制
+	 * @param int $needKLFieldsFlag 指定返回K线结构体特定某几项数据,KLFields枚举值或组合,如果未指定返回全部字段
+	 * @param int $rehabType 复权类型
+	 */
+	public function Qot_RequestHistoryKL($code, $klType, $beginTime, $endTime, $maxAckKLNum=0, $needKLFieldsFlag=[], $rehabType=1){
+		if(! $this->InitConnect()){
+			return array();
+		}
+		$C2S = array(
+				'security' => array(
+						'market' => $this->market,
+						'code' => (string)$code,
+				),
+				'klType' => (int)$klType,
+				'beginTime' => date("Y-m-d H:i:s", $beginTime),
+				'endTime' => date("Y-m-d H:i:s", $endTime),
+				'rehabType' => (int)$rehabType,
+		);
+		if($maxAckKLNum){
+			$C2S['maxAckKLNum'] = (int)$maxAckKLNum;
+		}
+		if($needKLFieldsFlag){
+			$C2S['needKLFieldsFlag'] = (array)$needKLFieldsFlag;
+		}
+		if(! $ret = $this->send('3103', $C2S)){
 			return array();
 		}
 		$gets = array();
@@ -721,8 +827,10 @@ class futu{
 		}
 		$gets = array();
 		foreach ($ret['tradeDateList'] as $v){
-			$gets[] = strtotime($v['time']);
+			$time = strtotime($v['time']);
+			$gets[$time] = $time;
 		}
+		ksort($gets, SORT_NUMERIC);
 		return (array)$gets;
 	}
 	/**
@@ -1331,16 +1439,45 @@ class futu{
 		if(! $proto = (int)$proto){
 			return false;
 		}
+		
+		$body = $C2S; //默认不加密
+		
+		if($this->encrypt && ($proto == 1001)){
 
+			$private_pkey = openssl_pkey_get_private(file_get_contents($this->private_key));
+			$details_pkey = openssl_pkey_get_details($private_pkey); //由私钥计算得到公钥
+			$public_pkey = openssl_pkey_get_public($details_pkey['key']);
+			
+			$C2S_encrypted = '';
+			for($i=0, $s=substr($C2S, 0, 100); $s; $i++,$s=substr($C2S, $i*100, 100)){
+				$encrypted = '';
+				openssl_public_encrypt($s, $encrypted, $public_pkey, OPENSSL_PKCS1_PADDING);
+				
+				$C2S_encrypted .= $encrypted;
+			}
+			$body = $C2S_encrypted;
+		}
+		if($this->encrypt && ($proto != 1001)){
+			
+			$mod = strlen($C2S)%16;
+			
+			$multiplier = $mod ? (16 - $mod) : 0;
+			
+			$body = openssl_encrypt($C2S . str_repeat("\0", $multiplier), 'AES-128-ECB', $this->connAESKey, OPENSSL_RAW_DATA|OPENSSL_ZERO_PADDING);
+			
+			$body .= str_repeat("\0", 15);
+			$body .= chr($mod);
+		}
+		
 		$ret = 'FT';
 		$ret .= pack("L", (int)$proto); //协议ID
 		$ret .= pack("C", 1); //协议格式类型，0为Protobuf格式，1为Json格式
 		$ret .= pack("C", 0); //协议版本，用于迭代兼容
 		$ret .= pack("L", $this->sequence = mt_rand(0, 4294967295)); //包序列号，用于对应请求包和回包
-		$ret .= pack("L", strlen($C2S)); //包体长度
+		$ret .= pack("L", strlen($body)); //包体长度
 		$ret .= sha1($C2S, true); //包体原始数据(解密后)的SHA1哈希值
 		$ret .= pack("@8");//保留8字节扩展
-		$ret .= $C2S;
+		$ret .= $body;
 		
 		return (string)$ret;
 	}
@@ -1351,13 +1488,39 @@ class futu{
 	 * @return array
 	 */
 	public function decode($recv, $C2S){
-		if(! $recv = trim($recv)){
+		if(empty($recv) === true){
 			return array();
 		}
+	
+		$head = substr($recv, 0, 44);
+		$body = substr($recv, 44);
 		
-		$pack = unpack("CF/CT/Lproto/CProtoFmtType/CProtoVer/LSerialNo/LBodyLen", $recv, 0);
+		$pack = unpack("CF/CT/Lproto/CProtoFmtType/CProtoVer/LSerialNo/LBodyLen", $head, 0);
 
-		if(! $ret = json_decode(substr($recv, 44), true)){
+		if($this->encrypt && ($pack['proto'] == 1001)){
+			
+			$private_pkey = openssl_pkey_get_private(file_get_contents($this->private_key));
+		
+			$body_decrypted = '';
+			for($i=0, $s=substr($body, 0, 128); $s; $i++,$s=substr($body, $i*128, 128)){
+				$decrypted = '';
+
+				openssl_private_decrypt($s, $decrypted, $private_pkey, OPENSSL_PKCS1_PADDING);
+
+				$body_decrypted .= $decrypted;
+			}
+			$body = $body_decrypted;
+		}
+		if($this->encrypt && ($pack['proto'] != 1001)){
+			$mod = ord(substr($body, -1)); //补了多少个0
+
+			$body = openssl_decrypt(substr($body, 0, -16), 'AES-128-ECB', $this->connAESKey, OPENSSL_RAW_DATA|OPENSSL_ZERO_PADDING);
+
+			$body = $mod ? substr($body, 0, $mod-16) : $body;
+		}
+	
+		if(! $ret = json_decode($body, true)){
+			$this->errorlog("json Error:{$C2S} - {$body}", 1);
 			return array();
 		}
 		if($ret['retType'] != 0){
@@ -1368,21 +1531,22 @@ class futu{
 			$this->errorlog("err Error:{$C2S} - {$ret['errCode']}:{$ret['retMsg']}", 1);
 			return array();
 		}
-		if($ret['retMsg']){
-			$this->errorlog("ret Msg:{$C2S} - {$ret['retType']}:{$ret['retMsg']}", 4);
+		$f = WWWROOT . "docs/futu_{$pack['proto']}.txt";
+		if(! is_file($f)){
+			file_put_contents($f, var_export($pack, true)."\n".var_export($ret, true));
 		}
 		return array('proto'=>$pack['proto'], 's2c'=>$ret['s2c']?(array)$ret['s2c']:true);
 	}
 	/**
 	 * 私有限额方法
-	 * @param int $typ 限额类型:1**2快照3历史订单4历史成交5解锁6获取版块7版块下的股票10下单11改单
+	 * @param int $typ 限额类型:1**2快照3历史订单4历史成交5解锁6获取版块7版块下的股票10下单11改单12股票对应的版块
 	 * @param int $sec 多少秒
 	 * @param int $cnt 多少次 比如订单为30秒20次
 	 * @param int $incr 累增多少
 	 * @return boolean 是否在限额内
 	 */
 	private function limit($typ, $sec, $cnt, $incr=1){
-		//做限额限频
+		
 		return true;
 	}
 	/**
@@ -1398,10 +1562,11 @@ class futu{
 		if(! $C2S = json_encode(array('c2s' => $C2S))){
 			return array();
 		}
+		
 		if(! $data = $this->encode($proto, $C2S)){
 			return array();
 		}
-
+		
 		if(! $length = @$this->cli->send("{$data}")){
 			$this->errorlog("Send Error:{$C2S} - ".socket_strerror($this->cli->errCode), 3);
 			return array();
@@ -1415,7 +1580,7 @@ class futu{
 			$this->errorlog("Recv Error:{$C2S} - ".socket_strerror($this->cli->errCode), 3);
 			return array();
 		}
-
+		
 		if(! $ret = $this->decode($recv, $C2S)){
 			return array();
 		}
@@ -1433,7 +1598,7 @@ class futu{
 	 * @return boolean
 	 */
 	private function errorlog($msg, $level=0){
-		//记录错误
+		
 		return false;
 	}
 	public function __destruct(){
