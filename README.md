@@ -15,6 +15,18 @@ https://futunnopen.github.io/futuquant/intro/intro.html
 
 同步模式:
 $o = new futu($host, $port, $pass);
+$o->market = 1; //港股行情
+$o->trdEnv = 1; //真实交易环境
+$o->trdMarket = 1; //港股交易
+print_r($o->GetGlobalState());
+
+同步加密模式:
+$o = new futu($host, $port, $pass);
+$o->encrypt = true; //通讯加密,同时FutuOpenD也要打开加密配置
+$o->private_key = '/data/private.key'; //通讯密钥,与FutuOpenD配置的一致
+$o->market = 1; //港股行情
+$o->trdEnv = 1; //真实交易环境
+$o->trdMarket = 1; //港股交易
 print_r($o->GetGlobalState());
 
 异步模式参考 qot_push.php 启动: /path/to/php -f qot_push.php > /dev/null 2>&1 &
